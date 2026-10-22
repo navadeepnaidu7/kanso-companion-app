@@ -19,6 +19,10 @@ object Ink {
     val Muted = Color(0xFF9A9AA2)
     val Accent = Color(0xFFF5F5F7)
     val Connected = Color(0xFF95B9A4)
+    val ControlTop = Color(0xFF30302E)
+    val ControlBottom = Color(0xFF212120)
+    val PadTop = Color(0xFF20201F)
+    val PadBottom = Color(0xFF171717)
 }
 
 /** Mirrors the launcher: firm presses, soft panel travel, no theatrical bounce. */

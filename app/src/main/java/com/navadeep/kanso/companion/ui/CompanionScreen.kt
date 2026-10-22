@@ -19,6 +19,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.*
 import androidx.compose.ui.draw.*
 import androidx.compose.ui.graphics.*
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.text.font.FontWeight
@@ -32,28 +35,18 @@ fun CompanionScreen(model: CompanionViewModel) {
     val state by model.state.collectAsStateWithLifecycle()
     var mode by rememberSaveable { mutableIntStateOf(0) }
     var channels by rememberSaveable { mutableStateOf(false) }
-    var apps by rememberSaveable { mutableStateOf(false) }
+    val library = rememberLibrarySheetState()
+    var appButtonBounds by remember { mutableStateOf(Rect.Zero) }
+    var options by rememberSaveable { mutableStateOf(false) }
     var connect by rememberSaveable { mutableStateOf(false) }
     val libraryScroll = rememberLazyGridState()
-    val launchMotion = remember { LaunchMotion() }
-    val flight = remember { Animatable(0f) }
-    var flying by remember { mutableStateOf(false) }
-    val depth by animateFloatAsState(if (apps || connect) 1f else 0f, Motion.panel(), label = "remote depth")
+    val modalDepth by animateFloatAsState(if (connect || options) 1f else 0f, Motion.panel(), label = "remote depth")
     var handledLaunch by rememberSaveable { mutableIntStateOf(state.launchRevision) }
     LaunchedEffect(state.launchRevision) {
         if (handledLaunch != state.launchRevision) {
             handledLaunch = state.launchRevision
-            if (launchMotion.app?.id == state.activeAppId) {
-                flight.snapTo(0f)
-                flying = true
-                apps = false
-                try { flight.animateTo(1f, Motion.settle()) } finally { flying = false }
-            } else apps = false
+            library.hide()
         }
-    }
-    LaunchedEffect(state.activeAppId) {
-        val id = state.activeAppId.orEmpty().lowercase()
-        channels = listOf("jiotv", "livetv", "tuner").any { it in id }
     }
     val context = LocalContext.current
     var networkAllowed by remember {
@@ -73,22 +66,22 @@ fun CompanionScreen(model: CompanionViewModel) {
     }
     LaunchedEffect(state.connected) { if (state.connected) connect = false }
     DisposableEffect(Unit) { onDispose { model.stopDiscovery() } }
-    BackHandler(connect || apps) { if (connect) connect = false else apps = false }
+    BackHandler(connect || options || library.visible) { if (connect) connect = false else if (options) options = false else library.hide() }
 
-    CompositionLocalProvider(LocalLaunchMotion provides launchMotion) {
     BoxWithConstraints(Modifier.fillMaxSize().background(Ink.Background)) {
         val compact = maxHeight < 780.dp
         val landscape = maxWidth > maxHeight
         val accent = state.apps.find { it.id == state.activeAppId }?.let { Color(it.accent) } ?: Ink.Accent
         Column(Modifier.fillMaxSize().graphicsLayer {
-            scaleX = 1f - depth * .055f; scaleY = 1f - depth * .055f
-            alpha = 1f - depth * .55f
+            val depth = maxOf(modalDepth, library.progress.value.coerceIn(0f, 1f))
+            scaleX = 1f - depth * .035f; scaleY = 1f - depth * .035f
+            alpha = 1f - depth * .4f
             if (Build.VERSION.SDK_INT >= 31) {
                 val radius = depth * 12.dp.toPx()
                 renderEffect = if (radius > .1f) android.graphics.RenderEffect.createBlurEffect(radius, radius,
                     android.graphics.Shader.TileMode.CLAMP).asComposeRenderEffect() else null
             }
-        }.then(if (apps || connect) Modifier.clearAndSetSemantics { } else Modifier)
+        }.then(if (library.visible || connect || options) Modifier.clearAndSetSemantics { } else Modifier)
             .windowInsetsPadding(WindowInsets.safeDrawing)
             .padding(horizontal = 28.dp).padding(bottom = 80.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             if (landscape) {
@@ -96,44 +89,60 @@ fun CompanionScreen(model: CompanionViewModel) {
                     RemoteSurface(mode, Modifier.weight(1f).fillMaxHeight(), model::command, accent) { PadMediaControls(state, model) }
                     Column(Modifier.width(260.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                         DeviceTitle(state, open = ::openConnection)
+                        SoftButton("Options", Symbols.More, Modifier.size(44.dp), plain = true) { options = true }
                         ModeSwitch(mode) { mode = it }
-                        ActionCluster(state, model, channels, Modifier.fillMaxWidth().padding(top = 12.dp), compact = true) { channels = !channels }
+                        ActionCluster(state, model, channels, Modifier.fillMaxWidth().padding(top = 12.dp), compact = true)
                     }
                 }
             } else {
-                DeviceTitle(state, Modifier.padding(top = if (compact) 6.dp else 16.dp), ::openConnection)
-                ActiveAppHeading(state)
-                Row(Modifier.fillMaxWidth().height(62.dp), verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween) {
-                    SoftButton("Mute", Symbols.Mute, Modifier.size(44.dp), plain = true) { model.command("volume_mute") }
-                    ModeSwitch(mode) { mode = it }
-                    SoftButton(if (channels) "Volume buttons" else "Channel buttons", if (channels) Symbols.Volume else Symbols.Channels,
-                        Modifier.size(44.dp), plain = true) { channels = !channels }
+                Box(Modifier.fillMaxWidth().padding(top = if (compact) 6.dp else 16.dp), contentAlignment = Alignment.Center) {
+                    DeviceTitle(state, Modifier.padding(horizontal = 44.dp), open = ::openConnection)
+                    SoftButton("Options", Symbols.More, Modifier.align(Alignment.CenterEnd).size(44.dp), plain = true) { options = true }
                 }
-                Box(Modifier.weight(1f).fillMaxWidth().padding(top = 8.dp, bottom = 18.dp)) {
+                Box(Modifier.weight(1f).fillMaxWidth().padding(top = 10.dp, bottom = 20.dp)) {
                     RemoteSurface(mode, Modifier.fillMaxSize(), model::command, accent) { PadMediaControls(state, model) }
+                    SoftButton(if (mode == 0) "Use buttons" else "Use trackpad", if (mode == 0) Symbols.DirectionPad else Symbols.Trackpad,
+                        Modifier.align(Alignment.TopEnd).padding(12.dp).size(44.dp), plain = true) { mode = 1 - mode }
                 }
-                ActionCluster(state, model, channels, Modifier.fillMaxWidth().padding(horizontal = 2.dp).padding(bottom = 12.dp)) { channels = !channels }
+                ActionCluster(state, model, channels, Modifier.widthIn(max = 328.dp).fillMaxWidth().padding(bottom = 8.dp))
             }
-            FavoritesDock(state, model, Modifier.fillMaxWidth()) { apps = true }
+
         }
 
-        // The library expands from its place in the floating navigation, and returns there.
-        AnimatedVisibility(apps, enter = fadeIn(Motion.settle()) + scaleIn(Motion.panel(), initialScale = .22f,
-            transformOrigin = TransformOrigin(.72f, 1f)),
-            exit = fadeOut(Motion.settle()) + scaleOut(Motion.panel(), targetScale = .22f, transformOrigin = TransformOrigin(.72f, 1f))) {
-            Column(Modifier.fillMaxSize().background(Ink.Surface).statusBarsPadding()) {
-                Box(Modifier.fillMaxWidth().height(68.dp).padding(horizontal = 20.dp), contentAlignment = Alignment.Center) {
-                    SoftButton("Close", Symbols.Back, Modifier.align(Alignment.CenterStart).size(44.dp), plain = true) { apps = false }
-                    Text("Apps", color = Ink.Text, fontSize = 22.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-.5).sp)
-                    SoftButton("Refresh apps", Symbols.Refresh, Modifier.align(Alignment.CenterEnd).size(44.dp), plain = true, onClick = model::refreshApps)
+        if (library.visible) Box(Modifier.fillMaxSize().clickable(
+            interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }, indication = null) { library.hide() })
+        LibrarySheet(library, appButtonBounds) { dragHeader ->
+            AppsPanel(state, model, libraryScroll, dragHeader, close = library::hide, connect = ::openConnection)
+        }
+        AppNavigation(library.isOpen, Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 12.dp)
+            .onGloballyPositioned { appButtonBounds = it.boundsInRoot() }) { if (it) library.show() else library.hide() }
+
+        AnimatedVisibility(options, enter = fadeIn(Motion.panel()), exit = fadeOut(Motion.settle())) {
+            Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = .55f)).clickable { options = false })
+        }
+        AnimatedVisibility(options, Modifier.align(Alignment.BottomCenter),
+            enter = slideInVertically(Motion.panel()) { it } + fadeIn(Motion.settle()),
+            exit = slideOutVertically(Motion.panel()) { it } + fadeOut(Motion.settle())) {
+            Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp)).background(Ink.Surface)
+                .navigationBarsPadding().padding(24.dp).semantics { paneTitle = "Options" }) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Text("Options", color = Ink.Text, fontSize = 23.sp, fontWeight = FontWeight.SemiBold)
+                    SoftButton("Close options", Icons.Outlined.Close, Modifier.size(44.dp), plain = true) { options = false }
                 }
-                AppsPanel(state, model, libraryScroll, ::openConnection)
+                TextButton(onClick = { model.command("volume_mute"); options = false }, modifier = Modifier.fillMaxWidth().height(56.dp)) {
+                    Icon(Symbols.Mute, null, Modifier.size(22.dp), tint = Ink.Text)
+                    Spacer(Modifier.width(12.dp)); Text("Mute / unmute", color = Ink.Text)
+                }
+                Row(Modifier.fillMaxWidth().padding(top = 12.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
+                    listOf(false to "Volume", true to "Channels").forEach { (value, title) ->
+                        FilterChip(selected = channels == value, onClick = { channels = value; options = false },
+                            label = { Text(title) }, modifier = Modifier.heightIn(min = 48.dp),
+                            colors = FilterChipDefaults.filterChipColors(containerColor = Ink.Surface, labelColor = Ink.Muted,
+                                selectedContainerColor = Ink.Raised, selectedLabelColor = Ink.Text))
+                    }
+                }
             }
         }
-        FloatingNavigation(apps, Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 12.dp)) { apps = it }
-        if (flying) LaunchFlight(launchMotion, flight.value, state.preview)
-
         AnimatedVisibility(connect, enter = fadeIn(Motion.panel()), exit = fadeOut(Motion.settle())) {
             Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = .55f)).clickable { connect = false })
         }
@@ -150,7 +159,7 @@ fun CompanionScreen(model: CompanionViewModel) {
                     fontSize = 25.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 28.dp, bottom = 24.dp))
                 ConnectionPanel(state, networkAllowed, model,
                     requestPermission = { permission.launch("android.permission.ACCESS_LOCAL_NETWORK") },
-                    onPreview = { model.preview(); connect = false; apps = false })
+                    onPreview = { model.preview(); connect = false; library.hide() })
             }
         }
         AnimatedVisibility(state.notice != null, Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = 14.dp),
@@ -159,6 +168,5 @@ fun CompanionScreen(model: CompanionViewModel) {
                 modifier = Modifier.clip(CircleShape).background(Ink.Raised).padding(horizontal = 20.dp, vertical = 13.dp)
                     .semantics { liveRegion = LiveRegionMode.Polite })
         }
-    }
     }
 }

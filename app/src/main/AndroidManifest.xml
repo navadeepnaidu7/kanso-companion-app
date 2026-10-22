@@ -4,7 +4,7 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_LOCAL_NETWORK" />
     <uses-permission android:name="android.permission.VIBRATE" />
-    <application android:label="Kanso" android:icon="@drawable/ic_kanso"
+    <application android:label="Kanso" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher"
         android:dataExtractionRules="@xml/backup_rules"
         android:theme="@style/Theme.Kanso" android:allowBackup="false"
         android:usesCleartextTraffic="false" android:supportsRtl="true">

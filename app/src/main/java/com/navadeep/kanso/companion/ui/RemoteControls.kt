@@ -28,10 +28,12 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.isSpecified
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -48,6 +50,15 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 
+/** A quiet top edge makes a control read as raised, even on an OLED-black canvas. */
+internal fun Modifier.controlSurface(shape: Shape = CircleShape, pressed: Boolean = false): Modifier =
+    shadow(if (pressed) 1.dp else 3.dp, shape, clip = false)
+        .clip(shape)
+        .background(Brush.verticalGradient(if (pressed) listOf(Ink.ControlBottom, Ink.ControlTop)
+            else listOf(Ink.ControlTop, Ink.ControlBottom)))
+        .border(.65.dp, Brush.verticalGradient(listOf(Color.White.copy(alpha = if (pressed) .035f else .12f),
+            Color.White.copy(alpha = .015f))), shape)
+
 @Composable
 fun SoftButton(
     label: String,
@@ -60,18 +71,18 @@ fun SoftButton(
 ) {
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
-    val scale = animateFloatAsState(if (pressed) .94f else 1f, Motion.press(), label = "press")
+    val scale = animateFloatAsState(if (pressed) .965f else 1f, Motion.press(), label = "press")
     val haptics = LocalHapticFeedback.current
     Box(modifier.graphicsLayer { scaleX = scale.value; scaleY = scale.value }
-        .clip(CircleShape).background(Brush.verticalGradient(when {
-            filled -> listOf(if (pressed) Color(0xFFCBCBD1) else Color(0xFFF2F2F5), Ink.Accent)
-            plain -> listOf(Color.White.copy(alpha = if (pressed) .08f else 0f), Color.Transparent)
-            else -> listOf(if (pressed) Color(0xFF303030) else Color(0xFF1C1C1C), Color(0xFF1C1C1C))
-        }))
+        .then(when {
+            filled -> Modifier.clip(CircleShape).background(if (pressed) Color(0xFFD1D1CD) else Ink.Text)
+            plain -> Modifier.clip(CircleShape).background(Color.White.copy(alpha = if (pressed) .07f else 0f))
+            else -> Modifier.controlSurface(pressed = pressed)
+        })
         .clickable(interactionSource = interaction, indication = null, role = Role.Button,
             onClickLabel = label) { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); onClick() }
         .semantics { contentDescription = label }, contentAlignment = Alignment.Center) {
-        Icon(icon, null, Modifier.size(if (large) 53.dp else 25.dp), tint = if (filled) Ink.Background else Ink.Text)
+        Icon(icon, null, Modifier.size(if (large) 44.dp else 24.dp), tint = if (filled) Ink.Background else Ink.Text)
     }
 }
 
@@ -103,7 +114,9 @@ fun ModeSwitch(mode: Int, onChange: (Int) -> Unit) {
 fun RemoteSurface(mode: Int, modifier: Modifier = Modifier, command: (String) -> Unit, accent: Color = Ink.Accent,
     footer: @Composable () -> Unit = {}) {
     val tint by animateColorAsState(accent, Motion.panel(), label = "app material")
-    Box(modifier.clip(RoundedCornerShape(38.dp)).background(Color(0xFF1C1C1C))) {
+    val shape = RoundedCornerShape(36.dp)
+    Box(modifier.clip(shape).background(Brush.verticalGradient(listOf(Ink.PadTop, Ink.PadBottom)))
+        .border(.65.dp, Brush.verticalGradient(listOf(Color.White.copy(alpha = .065f), Color.Transparent)), shape)) {
         AnimatedContent(mode, modifier = Modifier.fillMaxSize(), label = "remote mode",
             transitionSpec = {
                 (fadeIn(Motion.settle()) + scaleIn(Motion.settle(), initialScale = .94f)) togetherWith
@@ -200,7 +213,8 @@ private fun DirectionPad(command: (String) -> Unit, accent: Color) {
     BoxWithConstraints(Modifier.fillMaxSize().padding(6.dp), contentAlignment = Alignment.Center) {
         val diameter = minOf(maxWidth, maxHeight) - 12.dp
         Box(Modifier.size(diameter).clip(CircleShape)
-            .background(Color(0xFF252525))) {
+            .background(Brush.verticalGradient(listOf(Color(0xFF2A2A28), Color(0xFF20201F))))
+            .border(.65.dp, Color.White.copy(alpha = .055f), CircleShape)) {
             HoldDirection("up", Symbols.Up, Modifier.align(Alignment.TopCenter).fillMaxWidth(.47f).fillMaxHeight(.31f), command)
             HoldDirection("down", Symbols.Down, Modifier.align(Alignment.BottomCenter).fillMaxWidth(.47f).fillMaxHeight(.31f), command)
             HoldDirection("left", Symbols.Left, Modifier.align(Alignment.CenterStart).fillMaxWidth(.31f).fillMaxHeight(.47f), command)

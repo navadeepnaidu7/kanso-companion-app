@@ -17,6 +17,19 @@ object Symbols {
         }.build()
 
     val Plus by lazy { stroke("Plus") { moveTo(6f, 12f); lineTo(18f, 12f); moveTo(12f, 6f); lineTo(12f, 18f) } }
+    val More by lazy { stroke("More") {
+        moveTo(5f, 12f); lineTo(5.2f, 12f); moveTo(12f, 12f); lineTo(12.2f, 12f); moveTo(19f, 12f); lineTo(19.2f, 12f)
+    } }
+    val DirectionPad by lazy { stroke("DirectionPad") {
+        moveTo(9f, 6f); lineTo(12f, 3f); lineTo(15f, 6f)
+        moveTo(9f, 18f); lineTo(12f, 21f); lineTo(15f, 18f)
+        moveTo(6f, 9f); lineTo(3f, 12f); lineTo(6f, 15f)
+        moveTo(18f, 9f); lineTo(21f, 12f); lineTo(18f, 15f)
+    } }
+    val Trackpad by lazy { stroke("Trackpad") {
+        moveTo(5f, 4f); lineTo(19f, 4f); lineTo(19f, 20f); lineTo(5f, 20f); close()
+        moveTo(10f, 12f); lineTo(14f, 12f); moveTo(12f, 10f); lineTo(12f, 14f)
+    } }
     val Remote by lazy { stroke("Remote") {
         moveTo(9f, 2f); lineTo(15f, 2f); quadTo(17f, 2f, 17f, 4f); lineTo(17f, 20f)
         quadTo(17f, 22f, 15f, 22f); lineTo(9f, 22f); quadTo(7f, 22f, 7f, 20f)
@@ -74,7 +87,7 @@ object Symbols {
     } }
     val Back by lazy {
         ImageVector.Builder("Back", 24.dp, 24.dp, 24f, 24f).apply {
-            path(stroke = SolidColor(Color.White), strokeLineWidth = 1.9f, strokeLineCap = StrokeCap.Round, strokeLineJoin = StrokeJoin.Round) {
+            path(stroke = SolidColor(Color.White), strokeLineWidth = 1.7f, strokeLineCap = StrokeCap.Round, strokeLineJoin = StrokeJoin.Round) {
                 moveTo(14.5f, 5.5f); lineTo(8f, 12f); lineTo(14.5f, 18.5f)
             }
         }.build()

@@ -32,6 +32,7 @@ data class CompanionState(
     val launchingId: String? = null,
     val launchRevision: Int = 0,
     val receiverVersion: Int = 1,
+    val muted: Boolean? = null,
 )
 
 class CompanionViewModel(application: Application) : AndroidViewModel(application) {
@@ -50,6 +51,9 @@ class CompanionViewModel(application: Application) : AndroidViewModel(applicatio
     private var libraryJob: Job? = null
     private var noticeJob: Job? = null
     private var epoch = 0
+    private var foreground = false
+    private var reconnectJob: Job? = null
+    private var reconnectAttempt = 0
 
     init {
         // Restore saved artwork even when the TV is asleep. Launches still require a connection.
@@ -75,8 +79,10 @@ class CompanionViewModel(application: Application) : AndroidViewModel(applicatio
                         if (generation == epoch) mutableState.update { it.copy(activeAppId = value,
                             launchingId = null, launchRevision = it.launchRevision + 1) }
                     } else {
-                        client.request("command", JSONObject().put("key", value))
-                        if (value == "home" && generation == epoch) mutableState.update { it.copy(activeAppId = null) }
+                        val result = client.request("command", JSONObject().put("key", value))
+                        if (generation == epoch) mutableState.update { it.copy(
+                            activeAppId = if (value == "home") null else it.activeAppId,
+                            muted = if (result.has("muted")) result.getBoolean("muted") else it.muted) }
                     }
                 } catch (error: Exception) {
                     if (generation == epoch) {
@@ -102,13 +108,15 @@ class CompanionViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     private fun connect(device: TvDevice, code: String? = null) {
+        reconnectJob?.cancel(); reconnectJob = null
+        foreground = true
         connectionJob?.cancel()
         heartbeat?.cancel()
         libraryJob?.cancel()
         val generation = ++epoch
         client.close()
         libraryClient.close()
-        mutableState.update { it.copy(busy = true, preview = false, connected = false, error = null) }
+        mutableState.update { it.copy(busy = true, preview = false, connected = false, error = null, muted = null) }
         connectionJob = viewModelScope.launch {
             try {
                 val certificate = if (code == null) prefs.getString("certificate", null) else null
@@ -122,17 +130,22 @@ class CompanionViewModel(application: Application) : AndroidViewModel(applicatio
                     .putString("name", hello.optString("name", device.name))
                     .putString("token", token).putString("certificate", client.fingerprint).apply()
                 if (generation != epoch) return@launch
+                reconnectAttempt = 0
                 mutableState.update { it.copy(connected = true, busy = false,
                     tvName = hello.optString("name", device.name), selectedDevice = null,
-                    receiverVersion = hello.optInt("version", 1), activeAppId = hello.optString("activeApp").ifBlank { null }) }
+                    receiverVersion = hello.optInt("version", 1), activeAppId = hello.optString("activeApp").ifBlank { null },
+                    muted = if (hello.has("muted")) hello.getBoolean("muted") else null) }
                 refreshApps()
                 heartbeat = viewModelScope.launch {
                     while (true) {
                         delay(1200)
                         try {
                             val status = client.request("hello")
-                            if (generation == epoch && status.has("activeApp") && state.value.launchingId == null) {
-                                mutableState.update { it.copy(activeAppId = status.optString("activeApp").ifBlank { null }) }
+                            if (generation == epoch) {
+                                mutableState.update { it.copy(
+                                    activeAppId = if (status.has("activeApp") && it.launchingId == null)
+                                        status.optString("activeApp").ifBlank { null } else it.activeAppId,
+                                    muted = if (status.has("muted")) status.getBoolean("muted") else null) }
                             }
                         } catch (error: Exception) {
                             if (generation == epoch) handleFailure(error)
@@ -147,16 +160,20 @@ class CompanionViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun resume() {
+        foreground = true
         if (state.value.preview || state.value.connected || state.value.busy) return
         val host = prefs.getString("host", null) ?: return
         connect(TvDevice(prefs.getString("name", "TV") ?: "TV", host, prefs.getInt("port", 9876)))
     }
 
     fun suspendConnection() {
+        foreground = false
+        reconnectJob?.cancel(); reconnectJob = null
+        reconnectAttempt = 0
         ++epoch
         connectionJob?.cancel(); heartbeat?.cancel(); libraryJob?.cancel(); discovery.stop(); client.close(); libraryClient.close()
         while (commands.tryReceive().isSuccess) { /* Never replay old taps after reconnect. */ }
-        mutableState.update { it.copy(connected = false, busy = false, launchingId = null, activeAppId = null, loadingApps = false) }
+        mutableState.update { it.copy(connected = false, busy = false, launchingId = null, activeAppId = null, loadingApps = false, muted = null) }
     }
 
     fun forget() {
@@ -167,7 +184,7 @@ class CompanionViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun preview() {
         suspendConnection()
-        mutableState.value = CompanionState(preview = true, tvName = "Preview",
+        mutableState.value = CompanionState(preview = true, tvName = "Preview", muted = false,
             apps = AppArrangement.library(previewApps), dockIds = loadDock(previewApps, preview = true))
     }
 
@@ -197,6 +214,7 @@ class CompanionViewModel(application: Application) : AndroidViewModel(applicatio
     fun command(key: String) {
         if (state.value.preview) {
             if (key == "home") mutableState.update { it.copy(activeAppId = null) }
+            if (key == "volume_mute") mutableState.update { it.copy(muted = it.muted != true) }
             return
         }
         if (!state.value.connected) { notice("Connect your TV"); return }
@@ -275,11 +293,28 @@ class CompanionViewModel(application: Application) : AndroidViewModel(applicatio
 
     private fun handleFailure(error: Exception) {
         if (error is kotlinx.coroutines.CancellationException) return
+        android.util.Log.w("KansoCompanion", "Connection interrupted: ${error.javaClass.simpleName}")
+        ++epoch
+        heartbeat?.cancel(); connectionJob?.cancel()
         client.close()
         libraryJob?.cancel(); libraryClient.close()
+        while (commands.tryReceive().isSuccess) { /* Discard actions from the lost connection. */ }
         mutableState.update { it.copy(connected = false, busy = false, loadingApps = false,
-            launchingId = null, activeAppId = null,
+            launchingId = null, activeAppId = null, muted = null,
             error = if (error is RemoteError) error.message else "Couldn't reach the TV. Check the connection.") }
+        val identityFailure = generateSequence<Throwable>(error) { it.cause }.any {
+            it is java.security.cert.CertificateException || it is javax.net.ssl.SSLPeerUnverifiedException
+        }
+        if (foreground && error !is RemoteError && !identityFailure && prefs.contains("certificate")) {
+            reconnectJob?.cancel()
+            val wait = listOf(1000L, 2000L, 4000L, 8000L, 15000L)[reconnectAttempt.coerceAtMost(4)]
+            reconnectAttempt++
+            reconnectJob = viewModelScope.launch {
+                delay(wait)
+                reconnectJob = null
+                if (foreground && !state.value.preview) resume()
+            }
+        }
     }
 
     private fun notice(text: String) {
@@ -288,7 +323,7 @@ class CompanionViewModel(application: Application) : AndroidViewModel(applicatio
         noticeJob = viewModelScope.launch { delay(1800); mutableState.update { it.copy(notice = null) } }
     }
 
-    override fun onCleared() { discovery.stop(); client.close(); libraryClient.close(); commands.close() }
+    override fun onCleared() { foreground = false; reconnectJob?.cancel(); discovery.stop(); client.close(); libraryClient.close(); commands.close() }
 
     companion object {
         val previewApps = listOf(

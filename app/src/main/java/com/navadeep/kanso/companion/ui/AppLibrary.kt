@@ -49,21 +49,55 @@ import androidx.compose.ui.unit.sp
 import com.navadeep.kanso.companion.data.*
 
 @Composable
-fun FavoritesDock(state: CompanionState, model: CompanionViewModel, modifier: Modifier = Modifier, openApps: () -> Unit) {
+private fun FavoritesDock(state: CompanionState, model: CompanionViewModel, modifier: Modifier = Modifier) {
     val apps = remember(state.apps, state.dockIds) { state.dockIds.mapNotNull { id -> state.apps.find { it.id == id } } }
-    Row(modifier.heightIn(min = 56.dp).padding(horizontal = 6.dp, vertical = 4.dp),
-        horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
-        apps.forEach { app ->
-            AppTile(app, state, model, size = 46.dp, label = false, modifier = Modifier.width(70.dp))
+    BoxWithConstraints(modifier) {
+        val tileWidth = ((maxWidth - 24.dp) / 2.65f).coerceIn(116.dp, 156.dp)
+        LazyRow(Modifier.fillMaxWidth().semantics { contentDescription = "Favorite apps" }, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            items(apps, key = { it.id }) { app ->
+                AppTile(app, state, model, size = 40.dp, wide = true, small = true, modifier = Modifier.width(tileWidth))
+            }
         }
     }
 }
 
 @Composable
-fun AppsPanel(state: CompanionState, model: CompanionViewModel, gridState: LazyGridState, connect: () -> Unit) {
-    Box(Modifier.fillMaxWidth().fillMaxHeight()) {
+fun AppsPanel(state: CompanionState, model: CompanionViewModel, gridState: LazyGridState,
+    headerModifier: Modifier = Modifier, close: () -> Unit, connect: () -> Unit) {
+    var searchOpen by rememberSaveable { mutableStateOf(false) }
+    var query by rememberSaveable { mutableStateOf("") }
+    val searchFocus = remember { FocusRequester() }
+    val keyboard = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
+    val searchScroll = rememberLazyGridState()
+    LaunchedEffect(searchOpen) { if (searchOpen) searchFocus.requestFocus() }
+    Column(Modifier.fillMaxSize().imePadding()) {
+        Column(headerModifier.fillMaxWidth().semantics { contentDescription = "Apps panel header" }, horizontalAlignment = Alignment.CenterHorizontally) {
+            Box(Modifier.padding(top = 8.dp).size(32.dp, 4.dp).clip(CircleShape).background(Ink.Muted.copy(alpha = .35f)))
+            if (searchOpen) {
+                Row(Modifier.fillMaxWidth().height(64.dp).padding(start = 24.dp, end = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Outlined.Search, null, Modifier.size(20.dp), tint = Ink.Muted)
+                    Spacer(Modifier.width(12.dp))
+                    BasicTextField(query, { query = it }, modifier = Modifier.weight(1f).focusRequester(searchFocus)
+                        .semantics { contentDescription = "Search apps" }, singleLine = true,
+                        textStyle = MaterialTheme.typography.bodyLarge.copy(color = Ink.Text), cursorBrush = SolidColor(Ink.Text),
+                        decorationBox = { field -> Box {
+                            if (query.isEmpty()) Text("Search apps", color = Ink.Muted); field()
+                        } })
+                    TextButton(onClick = { keyboard?.hide(); focusManager.clearFocus(); query = ""; searchOpen = false }) { Text("Done", color = Ink.Text) }
+                }
+            } else Box(Modifier.fillMaxWidth().height(64.dp).padding(horizontal = 12.dp), contentAlignment = Alignment.Center) {
+                SoftButton("Close", Symbols.Down, Modifier.align(Alignment.CenterStart).size(44.dp), plain = true, onClick = close)
+                Text("Apps", color = Ink.Text, fontSize = 22.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-.5).sp)
+                Row(Modifier.align(Alignment.CenterEnd)) {
+                    if (state.apps.isNotEmpty()) SoftButton("Search apps", Icons.Outlined.Search, Modifier.size(44.dp), plain = true) { searchOpen = true }
+                    if (state.connected) SoftButton("Refresh apps", Symbols.Refresh, Modifier.size(44.dp), plain = true, onClick = model::refreshApps)
+                }
+            }
+        }
+    Box(Modifier.fillMaxWidth().weight(1f)) {
     when {
-        state.loadingApps && state.apps.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        (state.loadingApps || state.busy) && state.apps.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             CircularProgressIndicator(Modifier.size(24.dp), color = Ink.Accent, strokeWidth = 2.dp)
         }
         !state.connected && !state.preview && state.apps.isEmpty() -> Column(Modifier.fillMaxSize(),
@@ -78,39 +112,21 @@ fun AppsPanel(state: CompanionState, model: CompanionViewModel, gridState: LazyG
             Spacer(Modifier.height(18.dp))
             ActionButton("Try again", onClick = model::refreshApps)
         }
-        else -> AppLibrary(state, model, gridState, connect)
+        else -> AppLibrary(state, model, if (searchOpen) searchScroll else gridState, query, searchOpen, connect)
+    }
     }
     }
 }
 
 @Composable
-private fun AppLibrary(state: CompanionState, model: CompanionViewModel, gridState: LazyGridState, connect: () -> Unit) {
-    var searchOpen by rememberSaveable { mutableStateOf(false) }
-    var query by rememberSaveable { mutableStateOf("") }
-    val searchFocus = remember { FocusRequester() }
-    val keyboard = LocalSoftwareKeyboardController.current
-    val focusManager = LocalFocusManager.current
-    LaunchedEffect(searchOpen) { if (searchOpen) searchFocus.requestFocus() }
+private fun AppLibrary(state: CompanionState, model: CompanionViewModel, gridState: LazyGridState,
+    query: String, searchOpen: Boolean, connect: () -> Unit) {
     val dock = remember(state.apps, state.dockIds) { state.dockIds.mapNotNull { id -> state.apps.find { it.id == id } } }
     val filtered = remember(state.apps, query) { state.apps.filter { it.name.contains(query.trim(), ignoreCase = true) } }
-    Column(Modifier.fillMaxWidth().fillMaxHeight().imePadding()) {
-        Row(Modifier.fillMaxWidth().height(44.dp).padding(start = 22.dp, end = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-            if (searchOpen) {
-                BasicTextField(query, { query = it }, modifier = Modifier.weight(1f).focusRequester(searchFocus).semantics { contentDescription = "Search apps" },
-                    singleLine = true, textStyle = MaterialTheme.typography.bodyLarge.copy(color = Ink.Text),
-                    cursorBrush = SolidColor(Ink.Text), decorationBox = { field ->
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Outlined.Search, null, Modifier.size(19.dp), tint = Ink.Muted)
-                            Spacer(Modifier.width(10.dp))
-                            Box { if (query.isEmpty()) Text("Search apps", color = Ink.Muted, style = MaterialTheme.typography.bodyLarge); field() }
-                        }
-                    })
-                TextButton(onClick = { keyboard?.hide(); focusManager.clearFocus(); query = ""; searchOpen = false }) { Text("Done", color = Ink.Text) }
-            } else {
-                Text(if (!state.connected && !state.preview) "Saved apps" else if (state.preview) "Preview" else "", color = Ink.Muted, fontSize = 13.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
-                if (!state.connected && !state.preview) TextButton(onClick = connect) { Text("Connect", color = Ink.Accent) }
-                SoftButton("Search apps", Icons.Outlined.Search, Modifier.size(44.dp), plain = true) { searchOpen = true }
-            }
+    Column(Modifier.fillMaxSize()) {
+        if (!state.connected && !state.preview) Row(Modifier.fillMaxWidth().padding(horizontal = 23.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("Saved apps", color = Ink.Muted, fontSize = 13.sp, modifier = Modifier.weight(1f))
+            TextButton(onClick = connect) { Text("Connect", color = Ink.Text) }
         }
         Box(Modifier.weight(1f).fillMaxWidth()) {
             if (filtered.isEmpty()) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -118,8 +134,17 @@ private fun AppLibrary(state: CompanionState, model: CompanionViewModel, gridSta
             }
             LazyVerticalGrid(columns = GridCells.Adaptive(155.dp), state = gridState,
                 modifier = Modifier.fillMaxSize().semantics { contentDescription = "App library" },
-                contentPadding = PaddingValues(start = 23.dp, end = 23.dp, top = 8.dp, bottom = 110.dp),
-                horizontalArrangement = Arrangement.spacedBy(14.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
+                contentPadding = PaddingValues(start = 23.dp, end = 23.dp, top = 10.dp, bottom = 110.dp),
+                horizontalArrangement = Arrangement.spacedBy(14.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
+                if (!searchOpen && dock.isNotEmpty()) item(key = "favorites", span = { GridItemSpan(maxLineSpan) }) {
+                    Column {
+                        Text("Favorites", color = Ink.Muted, fontSize = 13.sp, fontWeight = FontWeight.Medium,
+                            modifier = Modifier.padding(bottom = 12.dp))
+                        FavoritesDock(state, model, Modifier.fillMaxWidth())
+                        Text("All apps", color = Ink.Muted, fontSize = 13.sp, fontWeight = FontWeight.Medium,
+                            modifier = Modifier.padding(top = 22.dp))
+                    }
+                }
                 items(filtered, key = { it.id }, contentType = { "app" }) { app ->
                     AppTile(app, state, model, size = 58.dp, wide = true,
                         modifier = Modifier.animateItem(placementSpec = Motion.settle()))
@@ -128,8 +153,8 @@ private fun AppLibrary(state: CompanionState, model: CompanionViewModel, gridSta
             // Edge veils keep partial rows legible without a hard clipping line.
             val atTop by remember { derivedStateOf { !gridState.canScrollBackward } }
             if (!atTop) Box(Modifier.fillMaxWidth().height(12.dp).background(Brush.verticalGradient(listOf(Ink.Surface, Color.Transparent))))
-            Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(22.dp)
-                .background(Brush.verticalGradient(listOf(Color.Transparent, Ink.Surface))))
+            Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(112.dp)
+                .background(Brush.verticalGradient(listOf(Color.Transparent, Ink.Surface.copy(alpha = .92f), Ink.Surface))))
         }
     }
 }
@@ -137,10 +162,8 @@ private fun AppLibrary(state: CompanionState, model: CompanionViewModel, gridSta
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun AppTile(app: TvApp, state: CompanionState, model: CompanionViewModel, size: Dp,
-    modifier: Modifier = Modifier, label: Boolean = true, wide: Boolean = false) {
+    modifier: Modifier = Modifier, label: Boolean = true, wide: Boolean = false, small: Boolean = false) {
     val source = remember { MutableInteractionSource() }
-    val launchMotion = LocalLaunchMotion.current
-    var artworkBounds by remember { mutableStateOf(Rect.Zero) }
     val pressed = source.collectIsPressedAsState()
     val opening = state.launchingId == app.id
     val active = state.activeAppId == app.id
@@ -154,26 +177,26 @@ private fun AppTile(app: TvApp, state: CompanionState, model: CompanionViewModel
             .widthIn(min = 48.dp).heightIn(min = 48.dp)
             .clip(RoundedCornerShape(if (wide) 0.dp else 17.dp))
             .combinedClickable(interactionSource = source, indication = null, role = Role.Button,
-                onLongClickLabel = "Edit ${app.name} in dock", onLongClick = {
+                onLongClickLabel = "Edit ${app.name} in favorites", onLongClick = {
                     haptics.performHapticFeedback(HapticFeedbackType.LongPress); menu = true; replacing = false
                 }, onClick = {
                     haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                    launchMotion?.select(app, artworkBounds)
                     model.launch(app)
                 }).semantics(mergeDescendants = true) {
                     contentDescription = "Open ${app.name} on TV"
                     if (opening) stateDescription = "Opening"
                     else if (active) stateDescription = "On TV"
                     customActions = if (pinnedIndex >= 0) listOf(
-                        CustomAccessibilityAction("Remove from dock") { model.unpin(app); true },
+                        CustomAccessibilityAction("Remove from favorites") { model.unpin(app); true },
                         CustomAccessibilityAction("Move left") { model.movePin(app, -1); true },
                         CustomAccessibilityAction("Move right") { model.movePin(app, 1); true },
                     ) else emptyList()
                 }.padding(if (wide) 0.dp else 2.dp), horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center) {
-            Box(Modifier.onGloballyPositioned { artworkBounds = it.boundsInRoot() }.then(if (wide) Modifier.clip(RoundedCornerShape(22.dp))
-                .border(.8.dp, if (active) Ink.Accent.copy(alpha = .7f) else Color.White.copy(alpha = .065f), RoundedCornerShape(22.dp)) else Modifier), contentAlignment = Alignment.Center) {
-                if (wide) AppBannerView(app, state.preview, Modifier.fillMaxWidth().aspectRatio(16f / 9f))
+            val tileShape = RoundedCornerShape(if (small) 14.dp else 22.dp)
+            Box(Modifier.then(if (wide) Modifier.clip(tileShape)
+                .border(.8.dp, if (active) Ink.Accent.copy(alpha = .7f) else Color.White.copy(alpha = .065f), tileShape) else Modifier), contentAlignment = Alignment.Center) {
+                if (wide) AppBannerView(app, state.preview, Modifier.fillMaxWidth().aspectRatio(16f / 9f), artworkSize = size)
                 else AppArtworkView(app, state.preview, size)
                 if (opening) Box(Modifier.matchParentSize().background(Color.Black.copy(alpha = .45f)), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator(Modifier.size(22.dp), color = Ink.Text, strokeWidth = 2.dp)
@@ -187,7 +210,7 @@ private fun AppTile(app: TvApp, state: CompanionState, model: CompanionViewModel
                         Box(Modifier.size(4.dp).background(Ink.Accent, CircleShape))
                         Spacer(Modifier.width(6.dp))
                     }
-                    Text(app.name, color = Ink.Text.copy(alpha = .9f), fontSize = 13.sp, fontWeight = FontWeight.Normal,
+                    Text(app.name, color = Ink.Text.copy(alpha = .9f), fontSize = if (small) 11.sp else 13.sp, fontWeight = FontWeight.Normal,
                         maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
                 }
             } else if (label) {
@@ -211,9 +234,9 @@ private fun AppTile(app: TvApp, state: CompanionState, model: CompanionViewModel
                     onClick = { model.movePin(app, -1); menu = false })
                 if (pinnedIndex < state.dockIds.lastIndex) DropdownMenuItem(text = { Text("Move right") }, leadingIcon = { Icon(Icons.Outlined.ArrowForward, null) },
                     onClick = { model.movePin(app, 1); menu = false })
-                DropdownMenuItem(text = { Text("Remove from dock") }, leadingIcon = { Icon(Icons.Outlined.RemoveCircleOutline, null) },
+                DropdownMenuItem(text = { Text("Remove from favorites") }, leadingIcon = { Icon(Icons.Outlined.RemoveCircleOutline, null) },
                     onClick = { model.unpin(app); menu = false })
-            } else DropdownMenuItem(text = { Text(if (state.dockIds.size < AppArrangement.DockSize) "Add to dock" else "Replace in dock") },
+            } else DropdownMenuItem(text = { Text(if (state.dockIds.size < AppArrangement.DockSize) "Add to favorites" else "Replace a favorite") },
                 leadingIcon = { Icon(Icons.Outlined.AddCircleOutline, null) }, onClick = {
                     if (state.dockIds.size < AppArrangement.DockSize) { model.pin(app); menu = false } else replacing = true
                 })
@@ -233,13 +256,13 @@ internal fun AppArtworkView(app: TvApp, preview: Boolean, size: Dp) {
 }
 
 @Composable
-internal fun AppBannerView(app: TvApp, preview: Boolean, modifier: Modifier = Modifier) {
+internal fun AppBannerView(app: TvApp, preview: Boolean, modifier: Modifier = Modifier, artworkSize: Dp = 64.dp) {
     Box(modifier.background(Brush.linearGradient(listOf(Color(app.accent).copy(alpha = .28f), Color(0xFF16171B)))),
         contentAlignment = Alignment.Center) {
         if (app.banner != null) Image(app.banner, null, Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
         else {
             // Keep a missing TV banner intentional: large original artwork on a color-matched field.
-            AppArtworkView(app, preview, 64.dp)
+            AppArtworkView(app, preview, artworkSize)
         }
         Box(Modifier.matchParentSize().background(Brush.verticalGradient(listOf(Color.White.copy(alpha = .035f), Color.Transparent, Color.Black.copy(alpha = .1f)))))
     }

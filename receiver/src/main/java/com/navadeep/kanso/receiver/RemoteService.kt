@@ -99,7 +99,7 @@ class RemoteService : AccessibilityService() {
             serviceName = "Kanso · ${Build.MODEL}"
             serviceType = "_kanso._tcp."
             port = 9876
-            setAttribute("version", "1")
+            setAttribute("version", "4")
         }, NsdManager.PROTOCOL_DNS_SD, listener)
     }
 
@@ -123,7 +123,7 @@ class RemoteService : AccessibilityService() {
                     writer.write(result.toString()); writer.newLine(); writer.flush()
                 }
             }
-        } catch (error: Exception) { android.util.Log.d("KansoReceiver", "Connection closed: ${error.javaClass.simpleName}") }
+        } catch (error: Exception) { android.util.Log.d("KansoReceiver", "Connection closed: ${error.javaClass.simpleName}: ${error.message}") }
         finally { clients.remove(socket); runCatching { socket.close() } }
     }
 
@@ -143,10 +143,19 @@ class RemoteService : AccessibilityService() {
                     active = foregroundPackage
                     true
                 }
-                response.put("name", Build.MODEL).put("version", 3).put("activeApp", active)
+                response.put("name", Build.MODEL).put("version", 4).put("activeApp", active)
+                    .put("muted", getSystemService(AudioManager::class.java).isStreamMute(AudioManager.STREAM_MUSIC))
             }
             "apps" -> response.put("apps", apps())
-            "command" -> check(onMain { navigate(request.getString("key")) }) { "This action isn't available on this screen" }
+            "command" -> {
+                val key = request.getString("key")
+                check(onMain {
+                    val handled = navigate(key)
+                    if (key.startsWith("volume_")) response.put("muted",
+                        getSystemService(AudioManager::class.java).isStreamMute(AudioManager.STREAM_MUSIC))
+                    handled
+                }) { "This action isn't available on this screen" }
+            }
             "launch" -> {
                 val packageName = request.getString("id")
                 val intent = packageManager.getLeanbackLaunchIntentForPackage(packageName)

@@ -4,7 +4,7 @@
 
 A native Android remote for Kanso. Opens directly to a rectangular trackpad; switch to directional buttons, or open the animated app drawer. Built with Kotlin and Jetpack Compose, using the launcher's palette and spring tuning.
 
-The interface uses graphite surfaces, a four-app dock, and a library of wide TV artwork tiles. Hold any app to add it to the dock, replace a slot, remove it, or move it left/right. Dock choices are saved separately for each paired TV. Streaming apps lead the library; utilities follow alphabetically. Search is available from the library's magnifying glass.
+The interface uses a matte trackpad, subtly raised controls, and a library of wide TV artwork tiles. Four favorites appear as smaller landscape tiles at the top of the library and scroll away with it. Hold any app to edit these shortcuts; choices are saved separately for each paired TV. Streaming apps lead the library; utilities follow alphabetically. Search is available in the library header.
 
 Artwork is decoded off the main thread and cached before display, so scrolling does not repeatedly decode icons. TV banners use compressed WebP; apps without a banner use their original icon against a color-matched background. A private per-TV disk cache restores the library while it refreshes. The library keeps its position when closed and reopened. Dock reordering uses spring placement animations.
 
@@ -22,7 +22,7 @@ adb install -r app\build\outputs\apk\debug\app-debug.apk
 adb shell am start -n com.navadeep.kanso.companion/.MainActivity
 ```
 
-The first screen is usable without a TV. **Connect → Try preview** enables an explicitly marked sample app drawer. Preview does not send commands or pretend to be a connected TV.
+The first screen is usable without a TV. **Connect â†’ Try preview** enables an explicitly marked sample app drawer. Preview does not send commands or pretend to be a connected TV.
 
 ## Connect to a TV
 
@@ -45,12 +45,13 @@ The receiver remains available through its accessibility service when another ap
 
 - Swipe the trackpad to move focus; tap to select; hold to request a long press.
 - Directional buttons respond on touch-down and repeat while held. Center OK also supports a long press.
-- Trackpad and Buttons share a large dark touch surface. Home and Play/pause sit to the left of the large Back button, with a vertical rocker on the right. Tap the rocker label or the top-right control to switch between channel and volume buttons. Hold either end to repeat; release or move outside to stop. Live-TV apps default to channel controls; other apps default to volume.
+- The remote opens directly to the large touch surface. Its small corner control switches between trackpad and D-pad. Home and Play/pause sit beside Back, with a volume rocker on the right. Tap the speaker to mute; a light, crossed-speaker button indicates TV-confirmed mute state. Receiver protocol 4 supplies that state on connection, after volume commands, and through periodic status updates. Older receivers retain the toggle without claiming a known mute state. Options contains an alternate mute action and the choice of volume or channel buttons. Hold either end of the rocker to repeat; release or move outside to stop.
 - Channel actions require receiver protocol 3. This receiver activates explicit, accessible Channel up/down or Next/Previous channel buttons in the foreground TV app. It reports unavailable when the app exposes no matching control. It does not inject arbitrary channel key events, substitute D-pad movement, or control an external set-top box. Validate this against the intended live-TV app before treating channel switching as supported on that TV.
 - Video apps get Rewind and Fast forward inside the pad; audio apps get Previous and Next. Utilities keep navigation. Profiles use Android app categories with fallbacks for common media apps. Media commands and long-press behavior depend on the TV app; unsupported seek commands may be ignored by that app.
-- Apps expands from the compact Remote/Apps navigation over a blurred, recessed remote. The library retains the large two-column 16:9 artwork with labels below. A successful launch carries the selected artwork toward the active-app badge as the remote returns. Android Back, the close control, and Remote return to the remote. Scroll position is retained.
+- One Apps button expands the library surface over a blurred, recessed remote. Artwork and text retain their natural size during the reveal. Drag down on the header, or pull down at the top of the grid, to dismiss; reversing the gesture or reopening during dismissal redirects the same spring. Favorites and the two-column 16:9 artwork share one vertical scroll. A successful launch returns to the remote with a small active-app mark beside the TV name. Android Back, the close control, and Remote also return to the remote. Scroll position is retained.
 - Saved TV artwork and dock choices can be browsed with the TV offline. The library says Saved apps and offers Connect; tapping an app while disconnected asks for a connection. Cached artwork never implies a successful launch or live TV state.
 - Connections close when the phone app goes into the background and reconnect when it returns. Commands are bounded, ordered, and never replayed after a reconnect.
+- While the remote is open, transport failures retry with 1, 2, 4, 8, then 15-second delays. Pending commands are discarded. Closing the app cancels retries; pairing and certificate failures require explicit attention rather than automatic re-pairing.
 
 ## Security and protocol
 
@@ -66,7 +67,7 @@ mDNS service: `_kanso._tcp.`. Messages are UTF-8, newline-delimited JSON. Respon
 {"type":"launch","token":"...","id":"com.google.android.youtube.tv"}
 ```
 
-Pair returns `token`. Hello returns `name`, protocol `version: 3`, and `activeApp` (the foreground package ID). Apps returns `apps: [{id, name, icon, banner, category}]`; `icon` is a base64 PNG, `banner` is a base64 WebP or an empty string, and `category` is Android's application category. Supported command keys: `up`, `down`, `left`, `right`, `select`, `long_select`, `back`, `home`, `play_pause`, `rewind`, `forward`, `previous`, `next`, `volume_up`, `volume_down`, `volume_mute`, `channel_up`, `channel_down`. The phone retains basic controls with a version 1 receiver, hides the added transport commands, and gives an update notice for channel/mute requests on receivers older than version 3.
+Pair returns `token`. Hello returns `name`, protocol `version: 4`, `activeApp` (the foreground package ID), and `muted` (the media stream's mute state). Volume command responses also return `muted`. Apps returns `apps: [{id, name, icon, banner, category}]`; `icon` is a base64 PNG, `banner` is a base64 WebP or an empty string, and `category` is Android's application category. Supported command keys: `up`, `down`, `left`, `right`, `select`, `long_select`, `back`, `home`, `play_pause`, `rewind`, `forward`, `previous`, `next`, `volume_up`, `volume_down`, `volume_mute`, `channel_up`, `channel_down`. The phone retains basic controls with a version 1 receiver, hides the added transport commands, and gives an update notice for channel/mute requests on receivers older than version 3.
 
 ## Verify
 
@@ -75,15 +76,13 @@ Pair returns `token`. Hello returns `name`, protocol `version: 3`, and `activeAp
 .\gradlew.bat :app:connectedPreviewAndroidTest
 ```
 
-Unit tests cover accumulated trackpad travel, diagonal intent, rapid swipes, and reset behavior. The device test covers mode changes, offline connection, preview, repeated app-panel transitions, and app tap feedback. Additional TV models and long-running OEM background behavior remain untested.
+The 11 unit tests cover trackpad travel and intent, app ordering, saved favorites, and remote profiles. Four phone instrumentation tests cover control modes, mute feedback in preview, favorites editing, search, launch-to-remote transitions, app profiles, hold/release cancellation, and library gestures. Gesture checks include ordinary scrolling, drag reversal, pulling down at the top of the grid, and reopening during a closing spring. Instrumentation uses the separate `.preview` application ID, preserving the installed companion's pairing and favorites.
 
-The instrumentation test uses the separate `.preview` application ID, preserving the installed companion's pairing and favorites. It also exercises removing/re-adding dock apps, filtering the library, launch-to-remote transitions, Home reset, and video/audio control profiles. Unit tests cover app order, stale packages, empty docks, moves at boundaries, and remote profiles. `tools/receiver_probe.py --paired-phone <serial> --launch-app com.google.android.youtube.tv` verifies authenticated artwork delivery and foreground tracking through launch and Home. Run this while the paired phone still has a debuggable build; the optimized release intentionally disables `run-as`. The Bravia's Settings app can redirect through account verification, so use a regular media app for this check.
+Live checks on a Motorola Edge 30 and Sony Bravia VU31 running Android 14 cover pairing, 35 installed apps and their artwork, trackpad navigation, Home, YouTube launch, app-aware controls, volume, and direct mute with TV-confirmed feedback. Audio settings are restored after testing. The mobile app uses the launcher's original icon assets.
 
-The optimized companion build was installed and visually checked on the Edge 30 with all 35 TV apps. The library scroll/restore check and YouTube launch-to-remote flow passed, preserving the user's dock. A short release-build scroll sample reported 153 frames, 6 Android-classified janky frames, and no missed vsyncs; this is a spot check, not a sustained performance benchmark. The 11 unit tests, phone interaction test, companion lint, receiver lint, and release build passed.
+`tools/check_tv_controls.py --phone <serial> --tv <serial>` exercises actual phone controls and verifies TV effects. `tools/check_reconnect.py --phone <serial> --tv <serial>` temporarily restarts only Kanso Receiver's accessibility service, restores the original service list, and checks reconnection without reopening or pairing. Run these with Kanso open and both devices free. Receiver-restart recovery on the same network does not establish TV cold-boot or IP-address-change recovery. Additional TV models and long-running OEM background behavior remain untested; channel controls still depend on explicit accessible controls in the foreground TV app.
 
-The subsequent reference-based redesign removes the TV illustration, uses the dark remote composition with a large Back control, and restores the larger app banners. Its two phone instrumentation tests and 11 unit tests pass, as do companion lint and the optimized release build. The updated release was installed on the Edge 30; real app artwork, control layout, library scrolling, and retained scroll position were checked. TV navigation was not exercised during this UI pass. Receiver protocol 3 is built but still needs installation and live-TV validation for channel and mute controls.
-
-Verified on a Motorola Edge 30 and a Sony Bravia VU31 running Android 14: LAN discovery, pairing, fetching installed app icons, Home, trackpad focus movement, and launching Crunchyroll from the phone. The original `my-toolkit-tv` launcher is unchanged.
+`tools/receiver_probe.py --paired-phone <serial> --launch-app com.google.android.youtube.tv` checks authenticated artwork delivery, certificate pinning, and foreground tracking. It requires a debuggable paired phone build; the optimized release intentionally disables `run-as`.
 
 ## License
 
